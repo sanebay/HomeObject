@@ -12,6 +12,7 @@
 #define private public
 
 #include "lib/homestore_backend/hs_homeobject.hpp"
+#include "lib/homestore_backend/index_kv.hpp"
 #include "lib/tests/fixture_app.hpp"
 #include "bits_generator.hpp"
 using namespace std::chrono_literals;

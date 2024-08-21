@@ -184,6 +184,7 @@ public:
 
 private:
     HSHomeObject* home_object_{nullptr};
+    uint64_t cur_snapshot_batch_num{0};
 };
 
 } // namespace homeobject

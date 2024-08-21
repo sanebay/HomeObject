@@ -250,7 +250,13 @@ BlobManager::AsyncResult< Blob > HSHomeObject::_get_blob(ShardInfo const& shard,
         return folly::makeUnexpected(r.error());
     }
 
-    auto const blkid = r.value();
+    return _get_blob_data(repl_dev, shard.id, blob_id, req_offset, req_len, r.value() /* blkid*/);
+}
+
+BlobManager::AsyncResult< Blob > HSHomeObject::_get_blob_data(shared< homestore::ReplDev > repl_dev,
+                                                              shard_id_t shard_id, blob_id_t blob_id,
+                                                              uint64_t req_offset, uint64_t req_len,
+                                                              const homestore::MultiBlkId& blkid) const {
     auto const total_size = blkid.blk_count() * repl_dev->get_blk_size();
     sisl::io_blob_safe read_buf{total_size, io_align};
 
@@ -258,9 +264,9 @@ BlobManager::AsyncResult< Blob > HSHomeObject::_get_blob(ShardInfo const& shard,
     sgs.size = total_size;
     sgs.iovs.emplace_back(iovec{.iov_base = read_buf.bytes(), .iov_len = read_buf.size()});
 
-    BLOGT(shard.id, blob_id, "Blob get request: blkid={}, buf={}", blkid.to_string(), (void*)read_buf.bytes());
+    BLOGT(shard_id, blob_id, "Blob get request: blkid={}, buf={}", blkid.to_string(), (void*)read_buf.bytes());
     return repl_dev->async_read(blkid, sgs, total_size)
-        .thenValue([this, blob_id, shard_id = shard.id, req_len, req_offset, blkid,
+        .thenValue([this, blob_id, shard_id, req_len, req_offset, blkid,
                     read_buf = std::move(read_buf)](auto&& result) mutable -> BlobManager::AsyncResult< Blob > {
             if (result) {
                 BLOGE(shard_id, blob_id, "Failed to get blob: err={}", blob_id, shard_id, result.value());

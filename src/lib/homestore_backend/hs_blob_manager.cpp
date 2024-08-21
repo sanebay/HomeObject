@@ -4,6 +4,7 @@
 #include "lib/homeobject_impl.hpp"
 #include "lib/blob_route.hpp"
 #include <homestore/homestore.hpp>
+#include <homestore/blkdata_service.hpp>
 
 SISL_LOGGING_DECL(blobmgr)
 
@@ -78,16 +79,18 @@ struct put_blob_req_ctx : public repl_result_ctx< BlobManager::Result< HSHomeObj
     sisl::io_blob_safe& blob_header_buf() { return data_bufs_[blob_header_idx_]; }
 };
 
-BlobManager::AsyncResult< blob_id_t > HSHomeObject::_put_blob(ShardInfo const& shard, Blob&& blob) {
+BlobManager::AsyncResult< blob_id_t > HSHomeObject::_put_blob(ShardInfo const& shard, Blob&& blob, bool local_write) {
     auto& pg_id = shard.placement_group;
     shared< homestore::ReplDev > repl_dev;
     blob_id_t new_blob_id;
+    shared< BlobIndexTable > index_table;
     {
         std::shared_lock lock_guard(_pg_lock);
         auto iter = _pg_map.find(pg_id);
         RELEASE_ASSERT(iter != _pg_map.end(), "PG not found");
         auto hs_pg = static_cast< HS_PG* >(iter->second.get());
         repl_dev = hs_pg->repl_dev_;
+        index_table = hs_pg->index_table_;
         hs_pg->durable_entities_update(
             [&new_blob_id](auto& de) { new_blob_id = de.blob_sequence_num.fetch_add(1, std::memory_order_relaxed); },
             false /* dirty */);
@@ -157,6 +160,26 @@ BlobManager::AsyncResult< blob_id_t > HSHomeObject::_put_blob(ShardInfo const& s
 
     BLOGT(req->blob_header()->shard_id, req->blob_header()->blob_id, "Put blob: header=[{}] sgs=[{}]",
           req->blob_header()->to_string(), req->data_sgs_string());
+
+    if (local_write) {
+        homestore::blk_alloc_hints hints;
+        homestore::MultiBlkId out_blkids;
+        auto ec = homestore::hs()->data_service().async_alloc_write(req->data_sgs(), hints, out_blkids).get();
+        if (ec) {
+            LOGE("Failed to write data ec={}", ec.value());
+            return folly::makeUnexpected(BlobError::UNKNOWN);
+        }
+        BlobInfo blob_info;
+        blob_info.shard_id = shard.id;
+        blob_info.blob_id = new_blob_id;
+        blob_info.pbas = out_blkids;
+        auto const [exist_already, status] = add_to_index_table(index_table, blob_info);
+        if (!exist_already && status != homestore::btree_status_t::success) {
+            LOGE("Failed to insert into index table for blob {} err {}", new_blob_id, enum_name(status));
+            return folly::makeUnexpected(BlobError::UNKNOWN);
+        }
+        return new_blob_id;
+    }
 
     repl_dev->async_alloc_write(req->cheader_buf(), req->ckey_buf(), req->data_sgs(), req);
     return req->result().deferValue([this, req](const auto& result) -> BlobManager::AsyncResult< blob_id_t > {
@@ -250,7 +273,13 @@ BlobManager::AsyncResult< Blob > HSHomeObject::_get_blob(ShardInfo const& shard,
         return folly::makeUnexpected(r.error());
     }
 
-    auto const blkid = r.value();
+    return _get_blob_data(repl_dev, shard.id, blob_id, req_offset, req_len, r.value() /* blkid*/);
+}
+
+BlobManager::AsyncResult< Blob > HSHomeObject::_get_blob_data(shared< homestore::ReplDev > repl_dev,
+                                                              shard_id_t shard_id, blob_id_t blob_id,
+                                                              uint64_t req_offset, uint64_t req_len,
+                                                              const homestore::MultiBlkId& blkid) const {
     auto const total_size = blkid.blk_count() * repl_dev->get_blk_size();
     sisl::io_blob_safe read_buf{total_size, io_align};
 
@@ -258,9 +287,9 @@ BlobManager::AsyncResult< Blob > HSHomeObject::_get_blob(ShardInfo const& shard,
     sgs.size = total_size;
     sgs.iovs.emplace_back(iovec{.iov_base = read_buf.bytes(), .iov_len = read_buf.size()});
 
-    BLOGT(shard.id, blob_id, "Blob get request: blkid={}, buf={}", blkid.to_string(), (void*)read_buf.bytes());
+    BLOGT(shard_id, blob_id, "Blob get request: blkid={}, buf={}", blkid.to_string(), (void*)read_buf.bytes());
     return repl_dev->async_read(blkid, sgs, total_size)
-        .thenValue([this, blob_id, shard_id = shard.id, req_len, req_offset, blkid,
+        .thenValue([this, blob_id, shard_id, req_len, req_offset, blkid,
                     read_buf = std::move(read_buf)](auto&& result) mutable -> BlobManager::AsyncResult< Blob > {
             if (result) {
                 BLOGE(shard_id, blob_id, "Failed to get blob: err={}", blob_id, shard_id, result.value());

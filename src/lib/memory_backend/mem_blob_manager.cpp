@@ -17,7 +17,7 @@ namespace homeobject {
     } else
 
 // Write (move) Blob to new BlobExt on heap and Insert BlobExt to Index
-BlobManager::AsyncResult< blob_id_t > MemoryHomeObject::_put_blob(ShardInfo const& _shard, Blob&& _blob) {
+BlobManager::AsyncResult< blob_id_t > MemoryHomeObject::_put_blob(ShardInfo const& _shard, Blob&& _blob, bool) {
     WITH_SHARD
     blob_id_t new_blob_id;
     {

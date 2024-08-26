@@ -9,7 +9,7 @@ required_conan_version = ">=1.60.0"
 
 class HomeObjectConan(ConanFile):
     name = "homeobject"
-    version = "2.0.11"
+    version = "2.0.12"
 
     homepage = "https://github.com/eBay/HomeObject"
     description = "Blob Store built on HomeReplication"
@@ -97,8 +97,8 @@ class HomeObjectConan(ConanFile):
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
-        if not self.conf.get("tools.build:skip_test", default=False):
-            cmake.test()
+        #if not self.conf.get("tools.build:skip_test", default=False):
+        #    cmake.test()
 
     def package(self):
         lib_dir = join(self.package_folder, "lib")

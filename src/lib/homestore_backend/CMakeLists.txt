@@ -22,6 +22,7 @@ target_sources("${PROJECT_NAME}_homestore" PRIVATE
     hs_blob_manager.cpp
     hs_shard_manager.cpp
     hs_pg_manager.cpp
+    pg_blob_iterator.cpp
     index_kv.cpp
     heap_chunk_selector.cpp
     replication_state_machine.cpp
@@ -40,6 +41,8 @@ settings_gen_cpp(
     ${CMAKE_CURRENT_BINARY_DIR}/generated/
     "${PROJECT_NAME}_homestore"
     hs_backend_config.fbs
+    resync_pg_shard.fbs
+    resync_blob_data.fbs
   )
 
 add_subdirectory(tests)
